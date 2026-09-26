@@ -16,7 +16,8 @@ export interface BrainReply {
 async function askBackend(
   apiBase: string,
   clientId: string,
-  message: string
+  message: string,
+  mode: "censored" | "uncensored"
 ): Promise<string | null> {
   try {
     const ctrl = new AbortController();
@@ -24,7 +25,7 @@ async function askBackend(
     const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/ai/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: clientId, message }),
+      body: JSON.stringify({ client_id: clientId, message, mode }),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
@@ -270,11 +271,21 @@ export async function getReply(
   apiBase: string | undefined,
   clientId: string,
   message: string,
-  siteMap: SiteLink[]
+  siteMap: SiteLink[],
+  mode: "censored" | "uncensored" = "censored"
 ): Promise<BrainReply> {
   if (apiBase) {
-    const backend = await askBackend(apiBase, clientId, message);
-    if (backend) return { text: backend };
+    try {
+      const backend = await askBackend(apiBase, clientId, message, mode);
+      if (backend) return { text: backend };
+    } catch {
+      /* fall through to the visible offline note below */
+    }
+    // The studio didn't answer — say so plainly, never go silent.
+    return {
+      text: "I'm having trouble reaching the studio right now, so I'm running on my own for the moment. Try again in a bit — or pick one of these and I'll keep up.",
+      options: rootOptions(siteMap).slice(0, 4),
+    };
   }
   return freeTextFallback();
 }

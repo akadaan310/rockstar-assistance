@@ -72,6 +72,22 @@ export default function VoiceCounterpart({
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [savingFlash, setSavingFlash] = useState(false);
+  const [mode, setMode] = useState<"censored" | "uncensored">(() => {
+    try {
+      return sessionStorage.getItem("vc-mode") === "uncensored" ? "uncensored" : "censored";
+    } catch {
+      return "censored";
+    }
+  });
+
+  const switchMode = useCallback((m: "censored" | "uncensored") => {
+    setMode(m);
+    try {
+      sessionStorage.setItem("vc-mode", m);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
 
   const sessionRef = useRef<string>("");
   const speakRef = useRef<{ cancel: () => void } | null>(null);
@@ -195,11 +211,11 @@ export default function VoiceCounterpart({
       setMessages((m) => [...m, { id: nextMsgId(), from: "user", text: clean }]);
       log("message", clean);
       setState("transcribing");
-      const reply = await getReply(apiBase, clientId, clean, siteMap);
+      const reply = await getReply(apiBase, clientId, clean, siteMap, mode);
       setState("idle");
       say(reply.text, reply.options);
     },
-    [apiBase, clientId, log, say, siteMap]
+    [apiBase, clientId, log, say, siteMap, mode]
   );
 
   const toggleMic = useCallback(async () => {
@@ -230,6 +246,15 @@ export default function VoiceCounterpart({
       setAnalyser(mic.analyser);
       setState("listening");
       setOpen(true);
+      const heardNothing = () => {
+        // Never leave her hanging in "listening" — say so and hand back control.
+        micRef.current = null;
+        recogRef.current = null;
+        setAnalyser(null);
+        mic.stop();
+        setState("idle");
+        say("I couldn't catch that — my ears aren't cooperating. Type it for me?");
+      };
       const recog = createRecognizer(
         (text) => {
           // transcribed — hand to the brain
@@ -239,12 +264,14 @@ export default function VoiceCounterpart({
           setState("transcribing");
           setTimeout(() => submitText(text), 400);
         },
-        () => {
-          /* recognition failed; user can stop manually and type */
-        }
+        heardNothing
       );
+      if (!recog) {
+        heardNothing();
+        return;
+      }
       recogRef.current = recog;
-      recog?.start();
+      recog.start();
     } catch {
       say("I couldn't reach the microphone. Check the browser permission, or just type to me.");
     }
@@ -437,6 +464,37 @@ export default function VoiceCounterpart({
               >
                 ×
               </button>
+            </div>
+          </div>
+
+          {/* mode toggle */}
+          <div className="flex items-center justify-between border-b hairline bg-noir-950/50 px-4 py-1.5">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-candle/40">
+              Conversation mode
+            </span>
+            <div className="flex rounded-full border hairline p-0.5" role="group" aria-label="Conversation mode">
+              {(["censored", "uncensored"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => {
+                    if (m === mode) return;
+                    switchMode(m);
+                    say(
+                      m === "uncensored"
+                        ? "Open mode — I'll keep it straight with you, no filters."
+                        : "Back to gentle mode."
+                    );
+                  }}
+                  aria-pressed={mode === m}
+                  className={`rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-all ${
+                    mode === m
+                      ? "bg-gild-500 text-noir-950"
+                      : "text-candle/55 hover:text-candle"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
             </div>
           </div>
 
